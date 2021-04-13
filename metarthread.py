@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 import board
 import neopixel
 from time import sleep
+import time
 import datetime
 import threading
 import logging
@@ -80,10 +81,10 @@ def initialize_logging():
 def initialize_display_and_leds():
 	# Initialize the LED strip
 	bright = BRIGHT_TIME_START < datetime.datetime.now().time() < DIM_TIME_START
-	logging.info ("Wind animation: %s", str(ACTIVATE_WINDCONDITION_ANIMATION))
-	logging.info ("Daytime Dimming: %s", str(ACTIVATE_DAYTIME_DIMMING))
-	logging.info(" using Sunrise/Sunset" if USE_SUNRISE_SUNSET and ACTIVATE_DAYTIME_DIMMING else "")
-	logging.info("External Display: %s " , str(ACTIVATE_EXTERNAL_METAR_DISPLAY))
+	logging.info (timestamp()+"Wind animation: %s", str(ACTIVATE_WINDCONDITION_ANIMATION))
+	logging.info (timestamp()+"Daytime Dimming: %s", str(ACTIVATE_DAYTIME_DIMMING))
+	logging.info(timestamp()+" using Sunrise/Sunset" if USE_SUNRISE_SUNSET and ACTIVATE_DAYTIME_DIMMING else "")
+	logging.info(timestamp()+"External Display: %s " , str(ACTIVATE_EXTERNAL_METAR_DISPLAY))
 
 	p = neopixel.NeoPixel(LED_PIN, LED_COUNT, brightness = LED_BRIGHTNESS_DIM if (ACTIVATE_DAYTIME_DIMMING and bright == False) else LED_BRIGHTNESS, pixel_order = LED_ORDER, auto_write = False)
 
@@ -120,6 +121,9 @@ y.start()
 # to stop the thread, set STOPFLAG to the pixel number to stop, then join the thread
 '''
 
+def timestamp():
+	return time.strftime("%Y/%m/%d-%H:%M:%S ",time.localtime())
+
 def calc_daytime():
 # Figure out sunrise/sunset times if astral is being used
 	try:
@@ -134,7 +138,7 @@ def calc_daytime():
 			try:
 				city = ast[LOCATION]
 			except KeyError:
-				logging.error("Error: Location not recognized, please check list of supported cities and reconfigure")
+				logging.error(timestamp()+"Error: Location not recognized, please check list of supported cities and reconfigure")
 			else:
 				print(city)
 				sun = city.sun(date = datetime.datetime.now().date(), local = True)
@@ -147,9 +151,9 @@ def calc_daytime():
 			try:
 				city = astral.geocoder.lookup(LOCATION, astral.geocoder.database())
 			except KeyError:
-				logging.error("Error: Location not recognized, please check list of supported cities and reconfigure")
+				logging.error(timestamp()+"Error: Location not recognized, please check list of supported cities and reconfigure")
 			else:
-				logging.info("%s", city)
+				logging.info(timestamp()+"%s", city)
 				sun = astral.sun.sun(city.observer, date = datetime.datetime.now().date(), tzinfo=city.timezone)
 				BRIGHT_TIME_START = sun['sunrise'].time()
 				DIM_TIME_START = sun['sunset'].time()
@@ -167,68 +171,72 @@ def get_weather(airports):
 	# Retrieve METAR from aviationweather.gov data server
 	# Details about parameters can be found here: https://www.aviationweather.gov/dataserver/example?datatype=metar
 	url = "https://www.aviationweather.gov/adds/dataserver_current/httpparam?dataSource=metars&requestType=retrieve&format=xml&hoursBeforeNow=5&mostRecentForEachStation=true&stationString=" + ",".join([item for item in airports if item != "NULL"])
-	logging.info ("Retriving from " + url)
-	req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36 Edg/86.0.622.69'})
-	content = urllib.request.urlopen(req).read()
+	logging.info (timestamp()+"Retriving from " + url)
+	try:
+		req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36 Edg/86.0.622.69'})
+		content = urllib.request.urlopen(req).read()
 	# Retrieve flying conditions from the service response and store in a dictionary for each airport
-	root = ET.fromstring(content)
-	conditionDict = { "NULL": {"flightCategory" : "", "windDir": "", "windSpeed" : 0, "windGustSpeed" :  0, "windGust" : False, "lightning": False, "tempC" : 0, "dewpointC" : 0, "vis" : 0, "altimHg" : 0, "obs" : "", "skyConditions" : {}, "obsTime" : datetime.datetime.now() } }
-	conditionDict.pop("NULL")
-	stationList = []
-	for metar in root.iter('METAR'):
-		stationId = metar.find('station_id').text
-		if metar.find('flight_category') is None:
-			print("Missing flight condition, skipping.")
-			continue
-		flightCategory = metar.find('flight_category').text
-		windDir = ""
-		windSpeed = 0
-		windGustSpeed = 0
-		windGust = False
-		lightning = False
-		tempC = 0
-		dewpointC = 0
-		vis = 0
-		altimHg = 0.0
-		obs = ""
-		skyConditions = []
-		if metar.find('wind_gust_kt') is not None:
-			windGustSpeed = int(metar.find('wind_gust_kt').text)
-			windGust = (True if (ALWAYS_BLINK_FOR_GUSTS or windGustSpeed > WIND_BLINK_THRESHOLD) else False)
-		if metar.find('wind_speed_kt') is not None:
-			windSpeed = int(metar.find('wind_speed_kt').text)
-		if metar.find('wind_dir_degrees') is not None:
-			windDir = metar.find('wind_dir_degrees').text
-		if metar.find('temp_c') is not None:
-			tempC = int(round(float(metar.find('temp_c').text)))
-		if metar.find('dewpoint_c') is not None:
-			dewpointC = int(round(float(metar.find('dewpoint_c').text)))
-		if metar.find('visibility_statute_mi') is not None:
-			vis = int(round(float(metar.find('visibility_statute_mi').text)))
-		if metar.find('altim_in_hg') is not None:
-			altimHg = float(round(float(metar.find('altim_in_hg').text), 2))
-		if metar.find('wx_string') is not None:
-			obs = metar.find('wx_string').text
-		if metar.find('observation_time') is not None:
-			obsTime = datetime.datetime.fromisoformat(metar.find('observation_time').text.replace("Z","+00:00"))
-		for skyIter in metar.iter("sky_condition"):
-			skyCond = { "cover" : skyIter.get("sky_cover"), "cloudBaseFt": int(skyIter.get("cloud_base_ft_agl", default=0)) }
-			skyConditions.append(skyCond)
-		if metar.find('raw_text') is not None:
-			rawText = metar.find('raw_text').text
-			lightning = False if rawText.find('LTG') == -1 else True
-		logging.info(stationId + ":" 
-		+ flightCategory + ":" 
-		+ str(windDir) + "@" + str(windSpeed) + ("G" + str(windGustSpeed) if windGust else "") + ":"
-		+ str(vis) + "SM:"
-		+ obs + ":"
-		+ str(tempC) + "/"
-		+ str(dewpointC) + ":"
-		+ str(altimHg) + ":"
-		+ str(lightning))
-		conditionDict[stationId] = { "flightCategory" : flightCategory, "windDir": windDir, "windSpeed" : windSpeed, "windGustSpeed": windGustSpeed, "windGust": windGust, "vis": vis, "obs" : obs, "tempC" : tempC, "dewpointC" : dewpointC, "altimHg" : altimHg, "lightning": lightning, "skyConditions" : skyConditions, "obsTime": obsTime }
-		stationList.append(stationId)
-	return(conditionDict)
+		root = ET.fromstring(content)
+		conditionDict = { "NULL": {"flightCategory" : "", "windDir": "", "windSpeed" : 0, "windGustSpeed" :  0, "windGust" : False, "lightning": False, "tempC" : 0, "dewpointC" : 0, "vis" : 0, "altimHg" : 0, "obs" : "", "skyConditions" : {}, "obsTime" : datetime.datetime.now() } }
+		conditionDict.pop("NULL")
+		stationList = []
+		for metar in root.iter('METAR'):
+			stationId = metar.find('station_id').text
+			if metar.find('flight_category') is None:
+				print("Missing flight condition, skipping.")
+				continue
+			flightCategory = metar.find('flight_category').text
+			windDir = ""
+			windSpeed = 0
+			windGustSpeed = 0
+			windGust = False
+			lightning = False
+			tempC = 0
+			dewpointC = 0
+			vis = 0
+			altimHg = 0.0
+			obs = ""
+			skyConditions = []
+			if metar.find('wind_gust_kt') is not None:
+				windGustSpeed = int(metar.find('wind_gust_kt').text)
+				windGust = (True if (ALWAYS_BLINK_FOR_GUSTS or windGustSpeed > WIND_BLINK_THRESHOLD) else False)
+			if metar.find('wind_speed_kt') is not None:
+				windSpeed = int(metar.find('wind_speed_kt').text)
+			if metar.find('wind_dir_degrees') is not None:
+				windDir = metar.find('wind_dir_degrees').text
+			if metar.find('temp_c') is not None:
+				tempC = int(round(float(metar.find('temp_c').text)))
+			if metar.find('dewpoint_c') is not None:
+				dewpointC = int(round(float(metar.find('dewpoint_c').text)))
+			if metar.find('visibility_statute_mi') is not None:
+				vis = int(round(float(metar.find('visibility_statute_mi').text)))
+			if metar.find('altim_in_hg') is not None:
+				altimHg = float(round(float(metar.find('altim_in_hg').text), 2))
+			if metar.find('wx_string') is not None:
+				obs = metar.find('wx_string').text
+			if metar.find('observation_time') is not None:
+				obsTime = datetime.datetime.fromisoformat(metar.find('observation_time').text.replace("Z","+00:00"))
+			for skyIter in metar.iter("sky_condition"):
+				skyCond = { "cover" : skyIter.get("sky_cover"), "cloudBaseFt": int(skyIter.get("cloud_base_ft_agl", default=0)) }
+				skyConditions.append(skyCond)
+			if metar.find('raw_text') is not None:
+				rawText = metar.find('raw_text').text
+				lightning = False if rawText.find('LTG') == -1 else True
+			logging.info(timestamp()+stationId + ":" 
+			+ flightCategory + ":" 
+			+ str(windDir) + "@" + str(windSpeed) + ("G" + str(windGustSpeed) if windGust else "") + ":"
+			+ str(vis) + "SM:"
+			+ obs + ":"
+			+ str(tempC) + "/"
+			+ str(dewpointC) + ":"
+			+ str(altimHg) + ":"
+			+ str(lightning))
+			conditionDict[stationId] = { "flightCategory" : flightCategory, "windDir": windDir, "windSpeed" : windSpeed, "windGustSpeed": windGustSpeed, "windGust": windGust, "vis": vis, "obs" : obs, "tempC" : tempC, "dewpointC" : dewpointC, "altimHg" : altimHg, "lightning": lightning, "skyConditions" : skyConditions, "obsTime": obsTime }
+			stationList.append(stationId)
+		return(conditionDict)
+	except:
+		logging.error(timestamp()+"Error retrieving weather, possibly network?")
+		sleep(10)
 
 
 def calc_target_colors (stations, conditions):  # calculate an array of bulb states given the list of stations and dict of conditions.  Returns an array of (color, blink) values
@@ -257,7 +265,7 @@ def calc_target_colors (stations, conditions):  # calculate an array of bulb sta
 				else:
 					color = COLOR_CLEAR
 
-				logging.debug ("Setting LED for " + airportcode + " to " + ("lightning " if lightningConditions else "") + ("windy " if windy else "") + (condition["flightCategory"] if conditions != None else "None") + " " + str(color))
+				logging.debug (timestamp()+"Setting LED for " + airportcode + " to " + ("lightning " if lightningConditions else "") + ("windy " if windy else "") + (condition["flightCategory"] if conditions != None else "None") + " " + str(color))
 
 		target_colors.append((color,windy))
 
@@ -285,7 +293,11 @@ calc_daytime()
 while True:
 	pixels,disp = initialize_display_and_leds()
 	airports = get_airport_list()
-	conditionDict = get_weather(airports)
+
+	conditionDict=False
+	while not conditionDict:
+		conditionDict = get_weather(airports)
+
 	ledstate = calc_target_colors(airports,conditionDict)
 
 	num_display_loops = int(REFRESH_TIME_SECONDS/(DISPLAY_ROTATION_SPEED*len(airports)))
@@ -298,7 +310,7 @@ while True:
 	# for windy stations, spin up a blinky thread per station and store a pointer to each thread in threadarray
 	for p in range(len(ledstate)):
 		if ledstate[p][1]:
-			logging.debug("blinking station %s", str(p))
+			logging.debug(timestamp()+"blinking station %s", str(p))
 
 			x = threading.Thread(target=blinkme, args=(p,ledstate[p][0],9999,BLINK_SPEED))  # very long blink period - assume the thread will get killed
 			x.start()
@@ -311,7 +323,7 @@ while True:
 	if disp is not None:	# Rotate through airports METAR on external display until it's time to refresh the weather
 
 		for l in range(num_display_loops):
-			logging.debug("Starting loop %s of %s",str(l),str(num_display_loops))
+			logging.debug(timestamp()+"Starting loop %s of %s",str(l),str(num_display_loops))
 
 			p = 0
 			for metarStation in airports:
@@ -322,7 +334,7 @@ while True:
 					STOPFLAG = DONTSTOP
 
 				if metarStation != "NULL" and conditionDict.get(metarStation):
-					logging.debug("Showing METAR Display for %s %s", str(p) , metarStation)
+					logging.debug(timestamp()+"Showing METAR Display for %s %s", str(p) , metarStation)
 					displaymetar.outputMetar(disp, metarStation, conditionDict.get(metarStation))
 					if FAST_BLINK_DISPLAYED_STATION:
 						thiscolor, b  = ledstate[p]
@@ -338,7 +350,7 @@ while True:
 						sleep(DISPLAY_ROTATION_SPEED)
 				p += 1
 
-		logging.info ('...kill all the threads...')
+		logging.info (timestamp()+'...kill all the threads...')
 # kill all the windy loops bafore refreshing
 		for p in range(len(ledstate)):
 			if ledstate[p][1]:
@@ -348,4 +360,4 @@ while True:
 
 	else:
 		sleep(REFRESH_TIME_SECONDS)   #If there's no display, then just pause for the refresh time
-	logging.info ('ready to refresh the weather')
+	logging.info (timestamp()+'ready to refresh the weather')
